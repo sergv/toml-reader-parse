@@ -10,6 +10,7 @@
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveTraversable          #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
@@ -24,7 +25,10 @@ module Data.Toml.Parse
   ( Node(..)
   , Parser
   , runParser
+  , AtomicTomlError(..)
+  , (<?>)
   , L
+  , extract
   , TomlParse(..)
   , FromToml(..)
   , Index(..)
@@ -32,25 +36,38 @@ module Data.Toml.Parse
   , pTable
   , pKey
   , pStr
+  , pStrL
   , pInt
+  , pIntL
   , pDouble
+  , pDoubleL
   , pDatetime
+  , pDatetimeL
   , pTArray
   , pArray
+  , pCases
+
+  , ppToml
   ) where
 
 import Control.Applicative
 import Control.Monad.Except
 
 import Data.Bifunctor
+import Data.DList (DList)
+import qualified Data.DList as DL
 import Data.Foldable
 import qualified Data.HashMap.Strict as HM
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Combinators
 import Data.Time
+import Data.Traversable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Void (Void, vacuous)
@@ -95,12 +112,14 @@ ppTomlType = \case
 data TomlPath =
     PathIndex !Int
   | PathKey !Text
+  | PathOther !Text
   deriving (Eq, Ord, Show, Generic)
 
 instance Pretty TomlPath where
   pretty = \case
-    PathIndex n -> "In array element" <+> pretty n
-    PathKey str -> "In table key" <+> squotes (pretty str)
+    PathIndex n     -> "In array element" <+> pretty n
+    PathKey str     -> "In table key" <+> squotes (pretty str)
+    PathOther thing -> "While parsing" <+> pretty thing
 
 data AtomicTomlError =
     UnexpectedType
@@ -149,9 +168,21 @@ instance Pretty TomlError where
   pretty = \case
     ErrorEmpty       -> "Control.Applicative.empty"
     ErrorAtomic err  -> pretty err
-    ErrorAnd x y     -> "AND" ## align (vsep [pretty x, pretty y])
-    ErrorOr  x y     -> "OR" ## align (vsep [pretty x, pretty y])
+    ErrorAnd x y     -> "AND" ## align (vsep $ map pretty $ toList $ collectConjuctions x y)
+    ErrorOr  x y     -> "OR"  ## align (vsep $ map pretty $ toList $ collectDisjunctions x y)
     ErrorPrefix ps e -> foldr (\p acc -> pretty p ## acc) (pretty e) ps
+    where
+      collectConjuctions :: TomlError -> TomlError -> DList TomlError
+      collectConjuctions (ErrorAnd a b) (ErrorAnd c d) = collectConjuctions a b <> collectConjuctions c d
+      collectConjuctions (ErrorAnd a b) c              = collectConjuctions a b <> DL.singleton c
+      collectConjuctions a              (ErrorAnd c d) = DL.singleton a <> collectConjuctions c d
+      collectConjuctions a              c              = DL.fromList [a, c]
+
+      collectDisjunctions :: TomlError -> TomlError -> DList TomlError
+      collectDisjunctions (ErrorOr a b) (ErrorOr c d) = collectDisjunctions a b <> collectDisjunctions c d
+      collectDisjunctions (ErrorOr a b) c             = collectDisjunctions a b <> DL.singleton c
+      collectDisjunctions a             (ErrorOr c d) = DL.singleton a <> collectDisjunctions c d
+      collectDisjunctions a             c             = DL.fromList [a, c]
 
 data IsCommitted = Uncommitted | Committed
   deriving (Eq, Ord, Show, Enum, Bounded)
@@ -198,6 +229,7 @@ commonPrefix x y = case (x, y) of
 instance Applicative Validation where
   {-# INLINE pure #-}
   pure = Validation . pure
+  {-# NOINLINE (<*>) #-}
   (<*>) vf'@(Validation vf) vx'@(Validation vx) =
     case (vf, vx) of
       (Left (cf, ef), Left (cx, ex)) -> Validation $ Left (cf <> cx, zipErrors ErrorAnd ef ex)
@@ -206,7 +238,9 @@ instance Applicative Validation where
       (Right f,       Right x)       -> Validation $ Right $ f x
 
 instance Alternative Validation where
+  {-# INLINE empty #-}
   empty = Validation $ Left (Uncommitted, ErrorEmpty)
+  {-# NOINLINE (<|>) #-}
   (<|>) x'@(Validation x) y'@(Validation y) =
     case (x, y) of
       (Right _,       _)             -> x'
@@ -246,14 +280,20 @@ instance Monad Parser where
     unParser $ f x'
   (>>) = (*>)
 
+infixl 9 <?>
+
+(<?>) :: L a -> Text -> L a
+(<?>) (L env x) y = L (inside (PathOther y) env) x
+
 instance TomlParse Parser where
-  throwParseError env err = Parser $ Validation $ Left (Uncommitted, err')
+  {-# NOINLINE throwParseError #-}
+  throwParseError (L env _) err = Parser $ Validation $ Left (Uncommitted, err')
     where
-      err' = case unParseEnv env of
+      err' = case reverse $ unParseEnv env of
         []     -> ErrorAtomic err
         p : ps -> ErrorPrefix (p :| ps) $ ErrorAtomic err
 
-runParser :: Node -> (L Node -> Parser a) -> Either (Doc Void) a
+runParser :: a -> (L a -> Parser b) -> Either (Doc Void) b
 runParser x f
   = bimap (("Error while parsing:" ##) . pretty . snd) id
   $ unValidation
@@ -264,84 +304,107 @@ runParser x f
 data L a = L ParseEnv a
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
+{-# INLINE extract #-}
+extract :: L a -> a
+extract (L _ x) = x
+
 {-# INLINE inside #-}
 inside :: TomlPath -> ParseEnv -> ParseEnv
 inside x (ParseEnv xs) = ParseEnv (x : xs)
 
 class (Applicative m, Alternative m) => TomlParse m where
-  throwParseError :: ParseEnv -> AtomicTomlError -> m a
+  throwParseError :: L b -> AtomicTomlError -> m a
 
-class FromToml a where
-  fromToml :: (TomlParse m, Monad m) => L Node -> m a
+class FromToml a b where
+  fromToml :: L a -> Parser b
 
-instance FromToml Node where
+instance FromToml Node (L Node) where
   {-# INLINE fromToml #-}
-  fromToml (L _ x) = pure x
+  fromToml = pure
 
-instance FromToml Text where
+instance FromToml Node String where
+  {-# INLINE fromToml #-}
+  fromToml = fmap T.unpack . pStr
+
+instance FromToml Node Text where
   {-# INLINE fromToml #-}
   fromToml = pStr
 
-instance FromToml Int where
+instance FromToml Node Int where
   {-# INLINE fromToml #-}
   fromToml = pInt
 
-instance FromToml Double where
+instance FromToml Node Double where
   {-# INLINE fromToml #-}
   fromToml = pDouble
 
-instance FromToml UTCTime where
+instance FromToml Node UTCTime where
   {-# INLINE fromToml #-}
   fromToml = pDatetime
 
-instance FromToml a => FromToml (Vector a) where
-  {-# INLINE fromToml #-}
+-- instance FromToml Node a => FromToml Node [a] where
+--   {-# INLINE fromToml #-}
+--   fromToml = pArray >=> traverse fromToml . toList
+
+instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Node (Map k v) where
+  -- {-# INLINE fromToml #-}
+  fromToml x = do
+    L env y <- pTable x
+    ys <- for (HM.toList y) $ \(k, v) ->
+      (,)
+        <$> fromToml (L env k)
+        <*> fromToml (L (inside (PathKey k) env) v)
+    pure $ M.fromList ys
+
+instance FromToml Node a => FromToml Node (Vector a) where
+  -- {-# INLINE fromToml #-}
   fromToml = pArray >=> traverse fromToml
 
-instance FromToml a => FromToml (NonEmpty a) where
-  {-# INLINE fromToml #-}
-  fromToml x@(L env _) = do
+instance FromToml Node a => FromToml Node (NonEmpty a) where
+  -- {-# INLINE fromToml #-}
+  fromToml x = do
     ys <- pArray x
     case toList ys of
-      []     -> throwParseError env $ OtherError "Expected non-empty list"
+      []     -> throwParseError x $ OtherError "Expected non-empty list"
       z : zs -> (:|) <$> fromToml z <*> traverse fromToml zs
 
 infixl 5 .:, .:?, .!=
 
-class Index a m where
-  (.:)  :: FromToml b => a -> Text -> m b
-  (.:?) :: FromToml b => a -> Text -> m (Maybe b)
+class Index a where
+  (.:)  :: FromToml Node b => a -> Text -> Parser b
+  (.:?) :: FromToml Node b => a -> Text -> Parser (Maybe b)
 
-instance (TomlParse m, Monad m) => Index (L Table) m where
+instance Index (L Table) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = pKey key x >>= fromToml
   (.:?) x key = traverse fromToml $ pKeyMaybe key x
 
-instance (TomlParse m, Monad m) => Index (L Node) m where
+instance Index (L Node) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = pTable x >>= pKey key >>= fromToml
   (.:?) x key = pTable x >>= traverse fromToml . pKeyMaybe key
 
-instance (TomlParse m, Monad m, a ~ L Node) => Index (m a) m where
+instance a ~ L Node => Index (Parser a) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = x >>= pTable >>= pKey key >>= fromToml
   (.:?) x key = x >>= pTable >>= traverse fromToml . pKeyMaybe key
 
+{-# INLINE (.!=) #-}
 (.!=) :: Functor m => m (Maybe a) -> a -> m a
 (.!=) action def = fromMaybe def <$> action
 
 pTable :: TomlParse m => L Node -> m (L Table)
 pTable = \case
-  L env (VTable x) -> pure $ L env x
-  L env other      -> throwParseError env $ UnexpectedType TTable other
+  L env (VTable x)   -> pure $ L env x
+  other@(L _ other') -> throwParseError other $ UnexpectedType TTable other'
 
 pKey :: TomlParse m => Text -> L Table -> m (L Node)
-pKey key tab'@(L env tab) = case pKeyMaybe key tab' of
+pKey key tab'@(L _ tab) = case pKeyMaybe key tab' of
   Just x  -> pure x
-  Nothing -> throwParseError env $ MissingKey key tab
+  Nothing -> throwParseError tab' $ MissingKey key tab
 
 pKeyMaybe :: Text -> L Table -> Maybe (L Node)
 pKeyMaybe key (L env tab) = case HM.lookup key tab of
@@ -349,31 +412,53 @@ pKeyMaybe key (L env tab) = case HM.lookup key tab of
   Nothing -> Nothing
 
 pStr :: TomlParse m => L Node -> m Text
-pStr = \case
-  L _   (VString x) -> pure x
-  L env other       -> throwParseError env $ UnexpectedType TString other
+pStr = fmap extract . pStrL
+
+pStrL :: TomlParse m => L Node -> m (L Text)
+pStrL = \case
+  L env (VString x)  -> pure $ L env x
+  other@(L _ other') -> throwParseError other $ UnexpectedType TString other'
 
 pInt :: TomlParse m => L Node -> m Int
-pInt = \case
-  L _   (VInteger x) -> pure $ fromIntegral x
-  L env other        -> throwParseError env $ UnexpectedType TInteger other
+pInt = fmap extract . pIntL
+
+pIntL :: TomlParse m => L Node -> m (L Int)
+pIntL = \case
+  L env (VInteger x) -> pure $ L env $ fromIntegral x
+  other@(L _ other') -> throwParseError other $ UnexpectedType TInteger other'
 
 pDouble :: TomlParse m => L Node -> m Double
-pDouble = \case
-  L _   (VFloat x) -> pure x
-  L env other      -> throwParseError env $ UnexpectedType TFloat other
+pDouble = fmap extract . pDoubleL
+
+pDoubleL :: TomlParse m => L Node -> m (L Double)
+pDoubleL = \case
+  L env (VFloat x)   -> pure $ L env x
+  other@(L _ other') -> throwParseError other $ UnexpectedType TFloat other'
 
 pDatetime :: TomlParse m => L Node -> m UTCTime
-pDatetime = \case
-  L _   (VDatetime x) -> pure x
-  L env other         -> throwParseError env $ UnexpectedType TDatetime other
+pDatetime = fmap extract . pDatetimeL
+
+pDatetimeL :: TomlParse m => L Node -> m (L UTCTime)
+pDatetimeL = \case
+  L env (VDatetime x) -> pure $ L env x
+  other@(L _ other')  -> throwParseError other $ UnexpectedType TDatetime other'
 
 pTArray :: TomlParse m => L Node -> m (Vector (L Table))
 pTArray = \case
   L env (VTArray x) -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
-  L env other       -> throwParseError env $ UnexpectedType TTArray other
+  other@(L _ other') -> throwParseError other $ UnexpectedType TTArray other'
 
 pArray :: TomlParse m => L Node -> m (Vector (L Node))
 pArray = \case
   L env (VArray x) -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
-  L env other      -> throwParseError env $ UnexpectedType TArray other
+  other@(L _ other') -> throwParseError other $ UnexpectedType TArray other'
+
+{-# INLINE pCases #-}
+pCases :: (Ord k, FromToml Node k, Pretty k) => Map k v -> L Node -> Parser v
+pCases env = \x -> do
+  k <- fromToml x
+  case M.lookup k env of
+    Just v  -> pure v
+    Nothing -> throwParseError x $ OtherError $
+      "Unexpected value" <+> squotes (pretty k) <> "." <+>
+      "Expected one of" <+> vsep (punctuate "," (map pretty (M.keys env)))

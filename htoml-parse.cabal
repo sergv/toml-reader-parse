@@ -29,6 +29,8 @@ library
     src
   build-depends:
     base >= 4.9,
+    containers,
+    dlist,
     htoml-megaparsec >= 2.1,
     mtl,
     prettyprinter,
