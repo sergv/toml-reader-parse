@@ -318,9 +318,13 @@ class (Applicative m, Alternative m) => TomlParse m where
 class FromToml a b where
   fromToml :: L a -> Parser b
 
-instance FromToml Node (L Node) where
+instance FromToml a (L a) where
   {-# INLINE fromToml #-}
   fromToml = pure
+
+instance FromToml a a where
+  {-# INLINE fromToml #-}
+  fromToml = pure . extract
 
 instance FromToml Node String where
   {-# INLINE fromToml #-}
@@ -348,8 +352,12 @@ instance FromToml Node UTCTime where
 
 instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Node (Map k v) where
   -- {-# INLINE fromToml #-}
-  fromToml x = do
-    L env y <- pTable x
+  fromToml = pTable >=> fromToml
+
+
+instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Table (Map k v) where
+  -- {-# INLINE fromToml #-}
+  fromToml (L env y) = do
     ys <- for (HM.toList y) $ \(k, v) ->
       (,)
         <$> fromToml (L env k)
@@ -365,7 +373,7 @@ instance FromToml Node a => FromToml Node (NonEmpty a) where
   fromToml x = do
     ys <- pArray x
     case toList ys of
-      []     -> throwParseError x $ OtherError "Expected non-empty list"
+      []     -> throwParseError x $ OtherError "Expected a non-empty list"
       z : zs -> (:|) <$> fromToml z <*> traverse fromToml zs
 
 infixl 5 .:, .:?, .!=
