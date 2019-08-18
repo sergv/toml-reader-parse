@@ -76,8 +76,8 @@ import Text.Toml hiding (TomlError)
 
 import Unsafe.Coerce
 
-data TomlType =
-    TTable
+data TomlType
+  = TTable
   | TTArray
   | TString
   | TInteger
@@ -109,8 +109,8 @@ ppTomlType = \case
   TDatetime -> ("a",  "datetime")
   TArray    -> ("an", "array")
 
-data TomlPath =
-    PathIndex !Int
+data TomlPath
+  = PathIndex !Int
   | PathKey !Text
   | PathOther !Text
   deriving (Eq, Ord, Show, Generic)
@@ -121,8 +121,8 @@ instance Pretty TomlPath where
     PathKey str     -> "In table key" <+> squotes (pretty str)
     PathOther thing -> "While parsing" <+> pretty thing
 
-data AtomicTomlError =
-    UnexpectedType
+data AtomicTomlError
+  = UnexpectedType
       !TomlType -- ^ Expected
       Node      -- ^ Got
   | MissingKey !Text Table
@@ -154,8 +154,8 @@ instance Pretty AtomicTomlError where
     OtherError err              -> "Other error:" ## vacuous err
 
 
-data TomlError =
-    ErrorEmpty
+data TomlError
+  = ErrorEmpty
   | ErrorAtomic !AtomicTomlError
   -- | Invariant: children of ErrorAnd never share common prefix.
   | ErrorAnd TomlError TomlError
@@ -184,6 +184,7 @@ instance Pretty TomlError where
       collectDisjunctions a             (ErrorOr c d) = DL.singleton a <> collectDisjunctions c d
       collectDisjunctions a             c             = DL.fromList [a, c]
 
+-- NB order of constructors is important
 data IsCommitted = Uncommitted | Committed
   deriving (Eq, Ord, Show, Enum, Bounded)
 
@@ -191,7 +192,8 @@ instance Semigroup IsCommitted where
   {-# INLINE (<>) #-}
   (<>) = max
 
-newtype Validation a = Validation { unValidation :: Either (IsCommitted, TomlError) a }
+newtype Validation a = Validation
+  { unValidation :: Either (IsCommitted, TomlError) a }
   deriving (Functor)
 
 zipErrors
@@ -400,6 +402,9 @@ instance a ~ L Node => Index (Parser a) where
   (.:)  x key = x >>= pTable >>= pKey key >>= fromToml
   (.:?) x key = x >>= pTable >>= traverse fromToml . pKeyMaybe key
 
+-- | Assign default value to a parser that produces 'Maybe'. Typically used together with '.:?':
+--
+-- > foo .:? "bar" .!= 10
 {-# INLINE (.!=) #-}
 (.!=) :: Functor m => m (Maybe a) -> a -> m a
 (.!=) action def = fromMaybe def <$> action
