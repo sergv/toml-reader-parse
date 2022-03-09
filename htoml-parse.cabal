@@ -33,7 +33,7 @@ library
     dlist,
     htoml-megaparsec >= 2.1,
     mtl,
-    prettyprinter,
+    prettyprinter >= 1.7,
     prettyprinter-combinators,
     text,
     time,

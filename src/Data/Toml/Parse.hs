@@ -37,6 +37,7 @@ module Data.Toml.Parse
   , pKey
   , pStr
   , pStrL
+  , pBool
   , pInt
   , pIntL
   , pDouble
@@ -64,14 +65,14 @@ import qualified Data.Map.Strict as M
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Prettyprint.Doc
-import Data.Text.Prettyprint.Doc.Combinators
 import Data.Time
 import Data.Traversable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Void (Void, vacuous)
 import GHC.Generics (Generic)
+import Prettyprinter
+import Prettyprinter.Combinators
 import Text.Toml hiding (TomlError)
 
 import Unsafe.Coerce
@@ -336,6 +337,10 @@ instance FromToml Node Text where
   {-# INLINE fromToml #-}
   fromToml = pStr
 
+instance FromToml Node Bool where
+  {-# INLINE fromToml #-}
+  fromToml = pBool
+
 instance FromToml Node Int where
   {-# INLINE fromToml #-}
   fromToml = pInt
@@ -432,6 +437,11 @@ pStrL = \case
   L env (VString x)  -> pure $ L env x
   other@(L _ other') -> throwParseError other $ UnexpectedType TString other'
 
+pBool :: TomlParse m => L Node -> m Bool
+pBool = \case
+  L _ (VBoolean x)    -> pure x
+  other@ (L _ other') -> throwParseError other $ UnexpectedType TBoolean other'
+
 pInt :: TomlParse m => L Node -> m Int
 pInt = fmap extract . pIntL
 
@@ -458,12 +468,12 @@ pDatetimeL = \case
 
 pTArray :: TomlParse m => L Node -> m (Vector (L Table))
 pTArray = \case
-  L env (VTArray x) -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
+  L env (VTArray x)  -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
   other@(L _ other') -> throwParseError other $ UnexpectedType TTArray other'
 
 pArray :: TomlParse m => L Node -> m (Vector (L Node))
 pArray = \case
-  L env (VArray x) -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
+  L env (VArray x)   -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
   other@(L _ other') -> throwParseError other $ UnexpectedType TArray other'
 
 {-# INLINE pCases #-}
