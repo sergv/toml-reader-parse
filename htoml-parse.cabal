@@ -29,6 +29,7 @@ library
     src
   build-depends:
     base >= 4.9,
+    comonad,
     containers,
     dlist,
     htoml-megaparsec >= 2.1,

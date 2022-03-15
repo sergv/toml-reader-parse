@@ -25,7 +25,9 @@ module Data.Toml.Parse
   ( Node(..)
   , Parser
   , runParser
+  , mkTomlError
   , AtomicTomlError(..)
+  , TomlError
   , (<?>)
   , L
   , extract
@@ -35,6 +37,7 @@ module Data.Toml.Parse
   , (.!=)
   , pTable
   , pKey
+  , pKeyMaybe
   , pStr
   , pStrL
   , pBool
@@ -52,6 +55,7 @@ module Data.Toml.Parse
   ) where
 
 import Control.Applicative
+import Control.Comonad
 import Control.Monad.Except
 
 import Data.Bifunctor
@@ -73,7 +77,7 @@ import Data.Void (Void, vacuous)
 import GHC.Generics (Generic)
 import Prettyprinter
 import Prettyprinter.Combinators
-import Text.Toml hiding (TomlError)
+import Text.Toml
 
 import Unsafe.Coerce
 
@@ -285,16 +289,14 @@ instance Monad Parser where
 
 infixl 9 <?>
 
+-- | Add textual annotation to the provided located thing. The annotation will
+-- be shows as part of error message if the location ultimately gets passed to
+-- 'throwParseError'.
 (<?>) :: L a -> Text -> L a
 (<?>) (L env x) y = L (inside (PathOther y) env) x
 
 instance TomlParse Parser where
-  {-# NOINLINE throwParseError #-}
-  throwParseError (L env _) err = Parser $ Validation $ Left (Uncommitted, err')
-    where
-      err' = case reverse $ unParseEnv env of
-        []     -> ErrorAtomic err
-        p : ps -> ErrorPrefix (p :| ps) $ ErrorAtomic err
+  throwParseError loc err = Parser $ Validation $ Left (Uncommitted, mkTomlError' loc err)
 
 runParser :: a -> (L a -> Parser b) -> Either (Doc Void) b
 runParser x f
@@ -304,12 +306,23 @@ runParser x f
   $ f
   $ L (ParseEnv []) x
 
+mkTomlError :: L a -> Doc Void -> TomlError
+mkTomlError loc = mkTomlError' loc . OtherError
+
+mkTomlError' :: L a -> AtomicTomlError -> TomlError
+mkTomlError' (L env _) err = case reverse $ unParseEnv env of
+  []     -> ErrorAtomic err
+  p : ps -> ErrorPrefix (p :| ps) $ ErrorAtomic err
+
+-- | Adds to 'a' its provenance in the toml file.
 data L a = L ParseEnv a
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-{-# INLINE extract #-}
-extract :: L a -> a
-extract (L _ x) = x
+instance Comonad L where
+  {-# INLINE extract   #-}
+  {-# INLINE duplicate #-}
+  extract (L _ x) = x
+  duplicate orig@(L env _) = L env orig
 
 {-# INLINE inside #-}
 inside :: TomlPath -> ParseEnv -> ParseEnv
@@ -393,19 +406,19 @@ instance Index (L Table) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = pKey key x >>= fromToml
-  (.:?) x key = traverse fromToml $ pKeyMaybe key x
+  (.:?) x key = traverse fromToml $ liftMaybe $ pKeyMaybe key x
 
 instance Index (L Node) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = pTable x >>= pKey key >>= fromToml
-  (.:?) x key = pTable x >>= traverse fromToml . pKeyMaybe key
+  (.:?) x key = pTable x >>= traverse fromToml . liftMaybe . pKeyMaybe key
 
 instance a ~ L Node => Index (Parser a) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = x >>= pTable >>= pKey key >>= fromToml
-  (.:?) x key = x >>= pTable >>= traverse fromToml . pKeyMaybe key
+  (.:?) x key = x >>= pTable >>= traverse fromToml . liftMaybe . pKeyMaybe key
 
 -- | Assign default value to a parser that produces 'Maybe'. Typically used together with '.:?':
 --
@@ -420,14 +433,12 @@ pTable = \case
   other@(L _ other') -> throwParseError other $ UnexpectedType TTable other'
 
 pKey :: TomlParse m => Text -> L Table -> m (L Node)
-pKey key tab'@(L _ tab) = case pKeyMaybe key tab' of
+pKey key tab'@(L _ tab) = case liftMaybe $ pKeyMaybe key tab' of
   Just x  -> pure x
   Nothing -> throwParseError tab' $ MissingKey key tab
 
-pKeyMaybe :: Text -> L Table -> Maybe (L Node)
-pKeyMaybe key (L env tab) = case HM.lookup key tab of
-  Just x  -> Just $ L (inside (PathKey key) env) x
-  Nothing -> Nothing
+pKeyMaybe :: Text -> L Table -> L (Maybe Node)
+pKeyMaybe key (L env tab) = L (inside (PathKey key) env) $ HM.lookup key tab
 
 pStr :: TomlParse m => L Node -> m Text
 pStr = fmap extract . pStrL
@@ -485,3 +496,6 @@ pCases env = \x -> do
     Nothing -> throwParseError x $ OtherError $
       "Unexpected value" <+> squotes (pretty k) <> "." <+>
       "Expected one of" <+> vsep (punctuate "," (map pretty (M.keys env)))
+
+liftMaybe :: L (Maybe a) -> Maybe (L a)
+liftMaybe (L env x) = L env <$> x
