@@ -74,9 +74,9 @@ import Data.Traversable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Void (Void, vacuous)
-import GHC.Generics (Generic)
 import Prettyprinter
 import Prettyprinter.Combinators
+import Prettyprinter.Generics
 import Text.Toml
 
 import Unsafe.Coerce
@@ -273,7 +273,7 @@ instance Monad Validation where
 instance MonadPlus Validation
 
 newtype ParseEnv = ParseEnv { unParseEnv :: [TomlPath] }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic, Pretty)
 
 newtype Parser a = Parser
   { unParser :: Validation a }
@@ -316,7 +316,9 @@ mkTomlError' (L env _) err = case reverse $ unParseEnv env of
 
 -- | Adds to 'a' its provenance in the toml file.
 data L a = L ParseEnv a
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Generic)
+
+instance Pretty a => Pretty (L a) where pretty = ppGeneric
 
 instance Comonad L where
   {-# INLINE extract   #-}
