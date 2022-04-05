@@ -299,7 +299,7 @@ instance TomlParse Parser where
 
 runParser :: a -> (L a -> Parser b) -> Either (Doc Void) b
 runParser x f
-  = bimap (("Error while parsing:" ##) . pretty . snd) id
+  = first (("Error while parsing:" ##) . pretty . snd)
   $ unValidation
   $ unParser
   $ f
