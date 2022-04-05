@@ -1,34 +1,61 @@
--- Created     :  20 October 2018
+cabal-version: 3.0
 
 name:
   htoml-parse
 version:
   0.1
 synopsis:
-  TODO
+  Parse TOML values produced by htoml-megaparsec package.
 description:
-  TODO
+  Package defining set of combinators that allows parsing arbitrary TOML structures.
+  Includes formatted errors that keep track of where in the original TOML file a value
+  came from.
+
 license:
-  BSD2
--- license-file:
---   LICENSE
+  Apache-2.0
+license-file:
+  LICENSE
+
 author:
   Sergey Vinokurov
 maintainer:
   Sergey Vinokurov <serg.foo@gmail.com>
 
-cabal-version:
-  2.0
 build-type:
   Simple
 
+common ghc-options
+  default-language:
+    Haskell2010
+
+  ghc-options:
+    -Weverything
+    -Wno-type-defaults
+    -Wno-implicit-prelude
+    -Wno-missing-local-signatures
+    -Wno-missing-import-lists
+    -Wno-missed-specialisations
+    -Wno-all-missed-specialisations
+    -Wno-safe
+    -Wno-missing-safe-haskell-mode
+    -Wno-unsafe
+
+  if impl(ghc >= 8.8)
+    ghc-options:
+      -Wno-missing-deriving-strategies
+
+  if impl(ghc >= 9.2)
+    ghc-options:
+      -Wno-missing-kind-signatures
+
 library
+  import: ghc-options
   exposed-modules:
     Data.Toml.Parse
   hs-source-dirs:
     src
   build-depends:
-    base >= 4.9,
+    base >= 4.9 && < 5,
     comonad,
     containers,
     dlist,
@@ -40,26 +67,4 @@ library
     time,
     transformers,
     unordered-containers,
-    vector,
-    void
-  default-language:
-    Haskell2010
-  ghc-options:
-    -Wall
-    -fwarn-name-shadowing
-    -fno-warn-type-defaults
-  if impl(ghc >= 8.0)
-    ghc-options:
-      -Wall-missed-specialisations
-      -Wcompat
-      -Widentities
-      -Wincomplete-record-updates
-      -Wincomplete-uni-patterns
-      -Wmissing-exported-signatures
-  if impl(ghc >= 8.2)
-    ghc-options:
-      -Wcpp-undef
-      -Wmissing-home-modules
-      -Wunbanged-strict-patterns
-  ghc-prof-options:
-    -fprof-auto
+    vector

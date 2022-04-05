@@ -2,17 +2,16 @@
 -- |
 -- Module      :  Data.Toml.Parse
 -- Copyright   :  (c) Sergey Vinokurov 2018
--- License     :  BSD-2 (see LICENSE)
+-- License     :  Apache-2.0 (see LICENSE)
 -- Maintainer  :  serg.foo@gmail.com
 ----------------------------------------------------------------------------
 
-{-# LANGUAGE DeriveFoldable             #-}
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImportQualifiedPost        #-}
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
@@ -60,19 +59,19 @@ import Control.Monad.Except
 
 import Data.Bifunctor
 import Data.DList (DList)
-import qualified Data.DList as DL
+import Data.DList qualified as DL
 import Data.Foldable
-import qualified Data.HashMap.Strict as HM
+import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as M
+import Data.Map.Strict qualified as M
 import Data.Maybe
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Time
 import Data.Traversable
 import Data.Vector (Vector)
-import qualified Data.Vector as V
+import Data.Vector qualified as V
 import Data.Void (Void, vacuous)
 import Prettyprinter
 import Prettyprinter.Combinators
@@ -135,6 +134,7 @@ data AtomicTomlError
   | OtherError (Doc Void)
   deriving (Show, Generic)
 
+-- | Prettyprint toml value.
 ppToml :: Node -> Doc ann
 ppToml = \case
   VTable    x  -> ppHashMapWith pretty ppToml x
@@ -157,7 +157,6 @@ instance Pretty AtomicTomlError where
     MissingKey key tab          -> "Missing key" <+> squotes (pretty key) <+> "in table:" ## ppHashMapWith pretty ppToml tab
     IndexOutOfBounds ix node    -> "Index" <+> pretty ix <+> "is out of bounds in array:" ## ppToml node
     OtherError err              -> "Other error:" ## vacuous err
-
 
 data TomlError
   = ErrorEmpty
@@ -368,17 +367,10 @@ instance FromToml Node UTCTime where
   {-# INLINE fromToml #-}
   fromToml = pDatetime
 
--- instance FromToml Node a => FromToml Node [a] where
---   {-# INLINE fromToml #-}
---   fromToml = pArray >=> traverse fromToml . toList
-
 instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Node (Map k v) where
-  -- {-# INLINE fromToml #-}
   fromToml = pTable >=> fromToml
 
-
 instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Table (Map k v) where
-  -- {-# INLINE fromToml #-}
   fromToml (L env y) = do
     ys <- for (HM.toList y) $ \(k, v) ->
       (,)
@@ -387,11 +379,9 @@ instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Table (Map k v) w
     pure $ M.fromList ys
 
 instance FromToml Node a => FromToml Node (Vector a) where
-  -- {-# INLINE fromToml #-}
   fromToml = pArray >=> traverse fromToml
 
 instance FromToml Node a => FromToml Node (NonEmpty a) where
-  -- {-# INLINE fromToml #-}
   fromToml x = do
     ys <- pArray x
     case toList ys of
@@ -452,8 +442,8 @@ pStrL = \case
 
 pBool :: TomlParse m => L Node -> m Bool
 pBool = \case
-  L _ (VBoolean x)    -> pure x
-  other@ (L _ other') -> throwParseError other $ UnexpectedType TBoolean other'
+  L _ (VBoolean x)   -> pure x
+  other@(L _ other') -> throwParseError other $ UnexpectedType TBoolean other'
 
 pInt :: TomlParse m => L Node -> m Int
 pInt = fmap extract . pIntL
