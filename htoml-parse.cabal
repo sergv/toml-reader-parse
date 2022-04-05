@@ -6,10 +6,13 @@ version:
   0.1
 synopsis:
   Parse TOML values produced by htoml-megaparsec package.
+
 description:
-  Package defining set of combinators that allows parsing arbitrary TOML structures.
+  Package definecs set of parser combinators that allows analyzing arbitrary TOML structures.
   Includes formatted errors that keep track of where in the original TOML file a value
   came from.
+
+category: Data, TOML
 
 license:
   Apache-2.0
@@ -23,6 +26,11 @@ maintainer:
 
 build-type:
   Simple
+
+homepage: https://github.com/sergv/htoml-parse
+source-repository head
+    type: git
+    location: https://github.com/sergv/htoml-parse.git
 
 common ghc-options
   default-language:
