@@ -65,6 +65,5 @@ library
     prettyprinter-combinators,
     text,
     time,
-    transformers,
     unordered-containers,
     vector

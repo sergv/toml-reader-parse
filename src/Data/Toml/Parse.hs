@@ -68,7 +68,8 @@ import Data.Map.Strict qualified as M
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Time
+import Data.Time (UTCTime)
+import Data.Time.Format.ISO8601
 import Data.Traversable
 import Data.Vector (Vector)
 import Data.Vector qualified as V
@@ -143,7 +144,7 @@ ppToml = \case
   VInteger  x  -> pretty x
   VFloat    x  -> pretty x
   VBoolean  x  -> pretty x
-  VDatetime x  -> pretty $ formatTime defaultTimeLocale (iso8601DateFormat Nothing) x
+  VDatetime x  -> pretty $ iso8601Show x
   VArray    xs -> ppVectorWith ppToml xs
 
 instance Pretty AtomicTomlError where
