@@ -19,9 +19,10 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 
-module Data.Toml.Parse
-  ( Node(..)
+module TOML.Parse
+  ( Value(..)
   , Parser
   , runParser
   , mkTomlError
@@ -44,32 +45,31 @@ module Data.Toml.Parse
   , pIntL
   , pDouble
   , pDoubleL
+  , pArray
+  , TomlDateTime(..)
   , pDatetime
   , pDatetimeL
-  , pTArray
-  , pArray
   , pCases
-
   , ppToml
   ) where
 
 import Control.Applicative
 import Control.Comonad
+import Control.DeepSeq
 import Control.Monad.Except
 
 import Data.Bifunctor
 import Data.DList (DList)
 import Data.DList qualified as DL
 import Data.Foldable
-import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Time (UTCTime)
-import Data.Time.Format.ISO8601
+import Data.Time qualified as Time
+import Data.Time.Format.ISO8601 qualified as Time
 import Data.Traversable
 import Data.Vector (Vector)
 import Data.Vector qualified as V
@@ -77,36 +77,37 @@ import Data.Void (Void, vacuous)
 import Prettyprinter
 import Prettyprinter.Combinators
 import Prettyprinter.Generics
-import Text.Toml
+
+import TOML
 
 import Unsafe.Coerce
 
 data TomlType
   = TTable
-  | TTArray
+  | TArray
   | TString
   | TInteger
   | TFloat
   | TBoolean
   | TDatetime
-  | TArray
   deriving (Eq, Ord, Show, Generic)
 
-getType :: Node -> TomlType
+getType :: Value -> TomlType
 getType = \case
-  VTable{}    -> TTable
-  VTArray{}   -> TTArray
-  VString{}   -> TString
-  VInteger{}  -> TInteger
-  VFloat{}    -> TFloat
-  VBoolean{}  -> TBoolean
-  VDatetime{} -> TDatetime
-  VArray{}    -> TArray
+  Table{}          -> TTable
+  Array{}          -> TArray
+  String{}         -> TString
+  Integer{}        -> TInteger
+  Float{}          -> TFloat
+  Boolean{}        -> TBoolean
+  OffsetDateTime{} -> TDatetime
+  LocalDateTime{}  -> TDatetime
+  LocalDate{}      -> TDatetime
+  LocalTime{}      -> TDatetime
 
 ppTomlType :: TomlType -> (Doc ann, Doc ann)
 ppTomlType = \case
   TTable    -> ("a",  "table")
-  TTArray   -> ("a",  "table array")
   TString   -> ("a",  "string")
   TInteger  -> ("an", "integer")
   TFloat    -> ("a",  "float")
@@ -129,33 +130,35 @@ instance Pretty TomlPath where
 data AtomicTomlError
   = UnexpectedType
       !TomlType -- ^ Expected
-      Node      -- ^ Got
+      Value     -- ^ Got
   | MissingKey !Text Table
-  | IndexOutOfBounds !Int Node
+  | IndexOutOfBounds !Int Value
   | OtherError (Doc Void)
   deriving (Show, Generic)
 
 -- | Prettyprint toml value.
-ppToml :: Node -> Doc ann
+ppToml :: Value -> Doc ann
 ppToml = \case
-  VTable    x  -> ppHashMapWith pretty ppToml x
-  VTArray   xs -> ppVectorWith (ppHashMapWith pretty ppToml) xs
-  VString   x  -> pretty x
-  VInteger  x  -> pretty x
-  VFloat    x  -> pretty x
-  VBoolean  x  -> pretty x
-  VDatetime x  -> pretty $ iso8601Show x
-  VArray    xs -> ppVectorWith ppToml xs
+  Table    x       -> ppMapWith pretty ppToml x
+  String   x       -> pretty x
+  Integer  x       -> pretty x
+  Float    x       -> pretty x
+  Boolean  x       -> pretty x
+  LocalDateTime x  -> pretty $ TomlLocalDateTime x
+  OffsetDateTime x -> pretty $ TomlOffsetDateTime x
+  LocalDate x      -> pretty $ TomlLocalDate x
+  LocalTime x      -> pretty $ TomlLocalTime x
+  Array    xs      -> ppListWith ppToml xs
 
 instance Pretty AtomicTomlError where
   pretty = \case
     UnexpectedType expected got ->
       "Expected to find" <+> article <+> typ <+> "but found" <+> article' <+> typ' <> "." <+>
-      "Node:" ## ppToml got
+      "Value:" ## ppToml got
       where
         (article,  typ)  = ppTomlType expected
         (article', typ') = ppTomlType $ getType got
-    MissingKey key tab          -> "Missing key" <+> squotes (pretty key) <+> "in table:" ## ppHashMapWith pretty ppToml tab
+    MissingKey key tab          -> "Missing key" <+> squotes (pretty key) <+> "in table:" ## ppMapWith pretty ppToml tab
     IndexOutOfBounds ix node    -> "Index" <+> pretty ix <+> "is out of bounds in array:" ## ppToml node
     OtherError err              -> "Other error:" ## vacuous err
 
@@ -227,7 +230,7 @@ commonPrefix x y = case (x, y) of
     go xs ys =
       case go' [] (toList xs) (toList ys) of
         (c : cs, xs', ys') -> Just (c :| cs, xs', ys')
-        _ -> Nothing
+        _                  -> Nothing
     go' :: Eq a => [a] -> [a] -> [a] -> ([a], [a], [a])
     go' common (a : as) (b : bs)
       | a == b = go' (a : common) as bs
@@ -344,45 +347,44 @@ instance FromToml a a where
   {-# INLINE fromToml #-}
   fromToml = pure . extract
 
-instance FromToml Node String where
+instance FromToml Value String where
   {-# INLINE fromToml #-}
   fromToml = fmap T.unpack . pStr
 
-instance FromToml Node Text where
+instance FromToml Value Text where
   {-# INLINE fromToml #-}
   fromToml = pStr
 
-instance FromToml Node Bool where
+instance FromToml Value Bool where
   {-# INLINE fromToml #-}
   fromToml = pBool
 
-instance FromToml Node Int where
+instance FromToml Value Int where
   {-# INLINE fromToml #-}
   fromToml = pInt
 
-instance FromToml Node Double where
+instance FromToml Value Double where
   {-# INLINE fromToml #-}
   fromToml = pDouble
 
-instance FromToml Node UTCTime where
-  {-# INLINE fromToml #-}
-  fromToml = pDatetime
-
-instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Node (Map k v) where
+instance (Ord k, FromToml Text k, FromToml Value v) => FromToml Value (Map k v) where
   fromToml = pTable >=> fromToml
 
-instance (Ord k, FromToml Text k, FromToml Node v) => FromToml Table (Map k v) where
+instance (Ord k, FromToml Text k, FromToml Value v) => FromToml Table (Map k v) where
   fromToml (L env y) = do
-    ys <- for (HM.toList y) $ \(k, v) ->
+    ys <- for (M.toList y) $ \(k, v) ->
       (,)
         <$> fromToml (L env k)
         <*> fromToml (L (inside (PathKey k) env) v)
     pure $ M.fromList ys
 
-instance FromToml Node a => FromToml Node (Vector a) where
+instance FromToml Value a => FromToml Value (Vector a) where
+  fromToml = pArray >=> traverse fromToml . V.fromList
+
+instance FromToml Value a => FromToml Value [a] where
   fromToml = pArray >=> traverse fromToml
 
-instance FromToml Node a => FromToml Node (NonEmpty a) where
+instance FromToml Value a => FromToml Value (NonEmpty a) where
   fromToml x = do
     ys <- pArray x
     case toList ys of
@@ -392,8 +394,8 @@ instance FromToml Node a => FromToml Node (NonEmpty a) where
 infixl 5 .:, .:?, .!=
 
 class Index a where
-  (.:)  :: FromToml Node b => a -> Text -> Parser b
-  (.:?) :: FromToml Node b => a -> Text -> Parser (Maybe b)
+  (.:)  :: FromToml Value b => a -> Text -> Parser b
+  (.:?) :: FromToml Value b => a -> Text -> Parser (Maybe b)
 
 instance Index (L Table) where
   {-# INLINE (.:)  #-}
@@ -401,13 +403,13 @@ instance Index (L Table) where
   (.:)  x key = pKey key x >>= fromToml
   (.:?) x key = traverse fromToml $ liftMaybe $ pKeyMaybe key x
 
-instance Index (L Node) where
+instance Index (L Value) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = pTable x >>= pKey key >>= fromToml
   (.:?) x key = pTable x >>= traverse fromToml . liftMaybe . pKeyMaybe key
 
-instance a ~ L Node => Index (Parser a) where
+instance a ~ L Value => Index (Parser a) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
   (.:)  x key = x >>= pTable >>= pKey key >>= fromToml
@@ -420,68 +422,81 @@ instance a ~ L Node => Index (Parser a) where
 (.!=) :: Functor m => m (Maybe a) -> a -> m a
 (.!=) action def = fromMaybe def <$> action
 
-pTable :: TomlParse m => L Node -> m (L Table)
+pTable :: TomlParse m => L Value -> m (L Table)
 pTable = \case
-  L env (VTable x)   -> pure $ L env x
+  L env (Table x)    -> pure $ L env x
   other@(L _ other') -> throwParseError other $ UnexpectedType TTable other'
 
-pKey :: TomlParse m => Text -> L Table -> m (L Node)
+pKey :: TomlParse m => Text -> L Table -> m (L Value)
 pKey key tab'@(L _ tab) = case liftMaybe $ pKeyMaybe key tab' of
   Just x  -> pure x
   Nothing -> throwParseError tab' $ MissingKey key tab
 
-pKeyMaybe :: Text -> L Table -> L (Maybe Node)
-pKeyMaybe key (L env tab) = L (inside (PathKey key) env) $ HM.lookup key tab
+pKeyMaybe :: Text -> L Table -> L (Maybe Value)
+pKeyMaybe key (L env tab) = L (inside (PathKey key) env) $ M.lookup key tab
 
-pStr :: TomlParse m => L Node -> m Text
+pStr :: TomlParse m => L Value -> m Text
 pStr = fmap extract . pStrL
 
-pStrL :: TomlParse m => L Node -> m (L Text)
+pStrL :: TomlParse m => L Value -> m (L Text)
 pStrL = \case
-  L env (VString x)  -> pure $ L env x
+  L env (String x)   -> pure $ L env x
   other@(L _ other') -> throwParseError other $ UnexpectedType TString other'
 
-pBool :: TomlParse m => L Node -> m Bool
+pBool :: TomlParse m => L Value -> m Bool
 pBool = \case
-  L _ (VBoolean x)   -> pure x
+  L _ (Boolean x)    -> pure x
   other@(L _ other') -> throwParseError other $ UnexpectedType TBoolean other'
 
-pInt :: TomlParse m => L Node -> m Int
+pInt :: TomlParse m => L Value -> m Int
 pInt = fmap extract . pIntL
 
-pIntL :: TomlParse m => L Node -> m (L Int)
+pIntL :: TomlParse m => L Value -> m (L Int)
 pIntL = \case
-  L env (VInteger x) -> pure $ L env $ fromIntegral x
+  L env (Integer x)  -> pure $ L env $ fromIntegral x
   other@(L _ other') -> throwParseError other $ UnexpectedType TInteger other'
 
-pDouble :: TomlParse m => L Node -> m Double
+pDouble :: TomlParse m => L Value -> m Double
 pDouble = fmap extract . pDoubleL
 
-pDoubleL :: TomlParse m => L Node -> m (L Double)
+pDoubleL :: TomlParse m => L Value -> m (L Double)
 pDoubleL = \case
-  L env (VFloat x)   -> pure $ L env x
+  L env (Float x)    -> pure $ L env x
   other@(L _ other') -> throwParseError other $ UnexpectedType TFloat other'
 
-pDatetime :: TomlParse m => L Node -> m UTCTime
+data TomlDateTime
+  = TomlLocalDateTime Time.LocalTime
+  | TomlOffsetDateTime (Time.LocalTime, Time.TimeZone)
+  | TomlLocalDate Time.Day
+  | TomlLocalTime Time.TimeOfDay
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData TomlDateTime
+
+instance Pretty TomlDateTime where
+  pretty (TomlLocalDateTime t)        = pretty $ Time.iso8601Show t
+  pretty (TomlOffsetDateTime (t, tz)) = pretty $ Time.iso8601Show $ Time.localTimeToUTC tz t
+  pretty (TomlLocalDate t)            = pretty $ Time.iso8601Show t
+  pretty (TomlLocalTime t)            = pretty $ Time.iso8601Show t
+
+pDatetime :: TomlParse m => L Value -> m TomlDateTime
 pDatetime = fmap extract . pDatetimeL
 
-pDatetimeL :: TomlParse m => L Node -> m (L UTCTime)
+pDatetimeL :: TomlParse m => L Value -> m (L TomlDateTime)
 pDatetimeL = \case
-  L env (VDatetime x) -> pure $ L env x
-  other@(L _ other')  -> throwParseError other $ UnexpectedType TDatetime other'
+  L env (LocalDateTime x)  -> pure $ L env $ TomlLocalDateTime x
+  L env (OffsetDateTime x) -> pure $ L env $ TomlOffsetDateTime x
+  L env (LocalDate x)      -> pure $ L env $ TomlLocalDate x
+  L env (LocalTime x)      -> pure $ L env $ TomlLocalTime x
+  other@(L _ other')       -> throwParseError other $ UnexpectedType TDatetime other'
 
-pTArray :: TomlParse m => L Node -> m (Vector (L Table))
-pTArray = \case
-  L env (VTArray x)  -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
-  other@(L _ other') -> throwParseError other $ UnexpectedType TTArray other'
-
-pArray :: TomlParse m => L Node -> m (Vector (L Node))
+pArray :: TomlParse m => L Value -> m [L Value]
 pArray = \case
-  L env (VArray x)   -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> V.indexed x
+  L env (Array x)    -> pure $ (\(n, x') -> L (inside (PathIndex n) env) x') <$> zip [0..] x
   other@(L _ other') -> throwParseError other $ UnexpectedType TArray other'
 
 {-# INLINE pCases #-}
-pCases :: (Ord k, FromToml Node k, Pretty k) => Map k v -> L Node -> Parser v
+pCases :: (Ord k, FromToml Value k, Pretty k) => Map k v -> L Value -> Parser v
 pCases env = \x -> do
   k <- fromToml x
   case M.lookup k env of
