@@ -5,7 +5,7 @@ name:
 version:
   0.1.0.0
 synopsis:
-  Parse TOML values produced by the toml-reader package.
+  Alternative parser for TOML values produced by the toml-reader package.
 
 description:
   Package defines a set of parser combinators that allows analyzing arbitrary TOML structures.
