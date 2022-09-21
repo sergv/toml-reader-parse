@@ -27,6 +27,10 @@ maintainer:
 build-type:
   Simple
 
+extra-source-files:
+  Readme.org
+  Changelog.org
+
 homepage: https://github.com/sergv/toml-reader-parse
 source-repository head
     type: git
@@ -75,3 +79,26 @@ library
     , text
     , time
     , vector
+
+test-suite toml-reader-tests
+  import: ghc-options
+  type:
+    exitcode-stdio-1.0
+  main-is:
+    test/TomlReaderTests.hs
+  hs-source-dirs:
+    .
+    test
+  build-depends:
+    , base
+    , optparse-applicative
+    , prettyprinter
+    , prettyprinter-combinators
+    , tasty
+    , tasty-hunit
+    , text
+    , toml-reader
+    , toml-reader-parse
+  ghc-options:
+    -rtsopts
+    -main-is TomlReaderTests

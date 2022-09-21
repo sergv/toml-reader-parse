@@ -36,6 +36,7 @@ module TOML.Parse
   , Index(..)
   , (.!=)
   , pTable
+  , pTableL
   , pKey
   , pKeyMaybe
   , pStr
@@ -339,15 +340,15 @@ class (Applicative m, Alternative m) => TomlParse m where
 class FromToml a b where
   fromToml :: L a -> Parser b
 
-instance FromToml a (L a) where
+instance FromToml b a => FromToml b (L a) where
   {-# INLINE fromToml #-}
-  fromToml = pure
+  fromToml b@(L env _) = L env <$> fromToml b
 
 instance FromToml a a where
   {-# INLINE fromToml #-}
   fromToml = pure . extract
 
-instance FromToml Value String where
+instance {-# OVERLAPPING #-} FromToml Value String where
   {-# INLINE fromToml #-}
   fromToml = fmap T.unpack . pStr
 
@@ -368,7 +369,7 @@ instance FromToml Value Double where
   fromToml = pDouble
 
 instance (Ord k, FromToml Text k, FromToml Value v) => FromToml Value (Map k v) where
-  fromToml = pTable >=> fromToml
+  fromToml = pTableL >=> fromToml
 
 instance (Ord k, FromToml Text k, FromToml Value v) => FromToml Table (Map k v) where
   fromToml (L env y) = do
@@ -406,14 +407,14 @@ instance Index (L Table) where
 instance Index (L Value) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
-  (.:)  x key = pTable x >>= pKey key >>= fromToml
-  (.:?) x key = pTable x >>= traverse fromToml . liftMaybe . pKeyMaybe key
+  (.:)  x key = pTableL x >>= pKey key >>= fromToml
+  (.:?) x key = pTableL x >>= traverse fromToml . liftMaybe . pKeyMaybe key
 
 instance a ~ L Value => Index (Parser a) where
   {-# INLINE (.:)  #-}
   {-# INLINE (.:?) #-}
-  (.:)  x key = x >>= pTable >>= pKey key >>= fromToml
-  (.:?) x key = x >>= pTable >>= traverse fromToml . liftMaybe . pKeyMaybe key
+  (.:)  x key = x >>= pTableL >>= pKey key >>= fromToml
+  (.:?) x key = x >>= pTableL >>= traverse fromToml . liftMaybe . pKeyMaybe key
 
 -- | Assign default value to a parser that produces 'Maybe'. Typically used together with '.:?':
 --
@@ -422,8 +423,11 @@ instance a ~ L Value => Index (Parser a) where
 (.!=) :: Functor m => m (Maybe a) -> a -> m a
 (.!=) action def = fromMaybe def <$> action
 
-pTable :: TomlParse m => L Value -> m (L Table)
-pTable = \case
+pTable :: TomlParse m => L Value -> m Table
+pTable = fmap extract . pTableL
+
+pTableL :: TomlParse m => L Value -> m (L Table)
+pTableL = \case
   L env (Table x)    -> pure $ L env x
   other@(L _ other') -> throwParseError other $ UnexpectedType TTable other'
 
