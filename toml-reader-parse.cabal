@@ -28,8 +28,8 @@ build-type:
   Simple
 
 extra-source-files:
-  Readme.org
-  Changelog.org
+  Readme.md
+  Changelog.md
 
 homepage: https://github.com/sergv/toml-reader-parse
 source-repository head

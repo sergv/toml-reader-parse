@@ -1,4 +1,4 @@
-#+STARTUP: content
+# Synopsis
 
 Parser combinators for directly parsing TOML values produced by
 `toml-reader`. Parsers track where values originate in the source
