@@ -1,3 +1,7 @@
+# 0.1.1.1
+
+- Removed `mtl` dependency
+
 # 0.1.1.0
 - Add tests
 - Mark `FromToml Value String` as overlapping - now it can be derived for newtypes

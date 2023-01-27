@@ -3,7 +3,7 @@ cabal-version: 3.0
 name:
   toml-reader-parse
 version:
-  0.1.1.0
+  0.1.1.1
 synopsis:
   Alternative parser for TOML values produced by the toml-reader package.
 
