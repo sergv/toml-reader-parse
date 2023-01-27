@@ -57,7 +57,7 @@ module TOML.Parse
 import Control.Applicative
 import Control.Comonad
 import Control.DeepSeq
-import Control.Monad.Except
+import Control.Monad
 
 import Data.Bifunctor
 import Data.DList (DList)
