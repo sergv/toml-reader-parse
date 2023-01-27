@@ -73,7 +73,6 @@ library
     , deepseq
     , dlist
     , toml-reader >= 0.1
-    , mtl
     , prettyprinter >= 1.7
     , prettyprinter-combinators
     , text
