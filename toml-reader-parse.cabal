@@ -42,23 +42,30 @@ common ghc-options
 
   ghc-options:
     -Weverything
-    -Wno-type-defaults
-    -Wno-implicit-prelude
-    -Wno-missing-local-signatures
-    -Wno-missing-import-lists
-    -Wno-missed-specialisations
     -Wno-all-missed-specialisations
+    -Wno-implicit-prelude
+    -Wno-missed-specialisations
+    -Wno-missing-import-lists
+    -Wno-missing-local-signatures
     -Wno-safe
-    -Wno-missing-safe-haskell-mode
     -Wno-unsafe
 
   if impl(ghc >= 8.8)
     ghc-options:
       -Wno-missing-deriving-strategies
 
+  if impl(ghc >= 8.10)
+    ghc-options:
+      -Wno-missing-safe-haskell-mode
+
   if impl(ghc >= 9.2)
     ghc-options:
       -Wno-missing-kind-signatures
+
+  if impl(ghc >= 9.8)
+    ghc-options:
+      -Wno-missing-role-annotations
+      -Wno-missing-poly-kind-signatures
 
 library
   import: ghc-options
